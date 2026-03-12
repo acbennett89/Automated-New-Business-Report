@@ -11,10 +11,10 @@ if not defined PYEXE (
     echo winget not available. Please install Python 3 and rerun this script.
     goto :end
   )
-  winget install -e --id Python.Python.3.12
+  call :install_python_with_winget
   call :resolve_python
   if not defined PYEXE (
-    echo Python still not found. Open a new terminal and rerun.
+    echo Python still not found. Finish any other installer or reboot, then rerun.
     goto :end
   )
 )
@@ -139,5 +139,33 @@ if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
 if exist "%ProgramFiles%\Python312\python.exe" (
   set "PYEXE=%ProgramFiles%\Python312\python.exe"
   exit /b 0
+)
+exit /b 0
+
+:install_python_with_winget
+set "WINGET_RC=1"
+for /L %%I in (1,1,4) do (
+  echo winget install attempt %%I/4...
+  winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements --disable-interactivity
+  set "WINGET_RC=!ERRORLEVEL!"
+  call :wait_for_python 10
+  if defined PYEXE exit /b 0
+  if "!WINGET_RC!"=="1618" (
+    echo Another installation is in progress. Waiting 30 seconds before retry...
+    timeout /t 30 /nobreak >nul
+  ) else (
+    echo winget returned exit code !WINGET_RC!.
+    exit /b !WINGET_RC!
+  )
+)
+echo ERROR: winget remained blocked by another installation.
+exit /b %WINGET_RC%
+
+:wait_for_python
+set "PY_WAIT_SECONDS=%~1"
+for /L %%I in (1,1,!PY_WAIT_SECONDS!) do (
+  call :resolve_python
+  if defined PYEXE exit /b 0
+  timeout /t 1 /nobreak >nul
 )
 exit /b 0
