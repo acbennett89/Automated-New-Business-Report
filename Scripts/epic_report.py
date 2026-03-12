@@ -739,21 +739,53 @@ def generate_report_and_download(page, download_dir: Path) -> bool:
         return False
 
     download_dir.mkdir(parents=True, exist_ok=True)
+    seen_pages: set[int] = set()
+    download_holder = {"download": None}
 
-    log_step("Generate step: waiting for download after Generate Report (600s).")
-    with page.expect_download(timeout=600_000) as download_info:
-        actions_button.first.click()
-        option = page.locator('li[data-automation-id="dropdown-menu-item-103"]')
-        if option.count() == 0:
-            option = page.locator("li.dropdown-menu-item").filter(
-                has=page.locator("span.text", has_text="Generate Report")
-            )
-        if option.count() == 0:
-            log_step("Generate step: Generate Report menu item not found.")
-            return False
-        option.first.click()
+    def remember_download(download) -> None:
+        if download_holder["download"] is None:
+            download_holder["download"] = download
 
-    download = download_info.value
+    def watch_page(target_page) -> None:
+        try:
+            key = id(target_page)
+            if key in seen_pages:
+                return
+            seen_pages.add(key)
+            target_page.on("download", remember_download)
+            log_step(f"Generate step: watching page for downloads -> {describe_page(target_page)}")
+        except Exception:
+            pass
+
+    for existing_page in page.context.pages:
+        watch_page(existing_page)
+    page.context.on("page", watch_page)
+
+    actions_button.first.click()
+    option = page.locator('li[data-automation-id="dropdown-menu-item-103"]')
+    if option.count() == 0:
+        option = page.locator("li.dropdown-menu-item").filter(
+            has=page.locator("span.text", has_text="Generate Report")
+        )
+    if option.count() == 0:
+        log_step("Generate step: Generate Report menu item not found.")
+        return False
+
+    log_step("Generate step: waiting for download after Generate Report (300s).")
+    option.first.click()
+
+    deadline = time.perf_counter() + 300
+    while time.perf_counter() < deadline and download_holder["download"] is None:
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            time.sleep(0.25)
+
+    download = download_holder["download"]
+    if download is None:
+        log_step("Generate step: no download detected within 300s.")
+        return False
+
     target_path = download_dir / download.suggested_filename
     download.save_as(str(target_path))
     log_step(f"Generate step complete in {seconds_since(started)}. Downloaded to: {target_path}")
