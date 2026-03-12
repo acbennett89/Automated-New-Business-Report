@@ -60,6 +60,7 @@ Automate collecting the required reports (currently gathered in Chrome) and prod
 - Delete `config/storage_state.json` if you need to force a fresh login.
 - Delete `config/epic_storage_state.json` to force EPIC re-login.
 - If Python is missing, `run_reports.bat` attempts to install it via `winget` and may prompt for approval.
+- Git help: see `CHEATSHEET.md` and `Scripts/git_shortcuts.ps1`.
 
 ## Change Log
 - 2026-02-17: Initialized README.

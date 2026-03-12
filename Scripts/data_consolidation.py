@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
+from math import ceil
 from pathlib import Path
 import shutil
 import tempfile
 from typing import Dict, Iterable, Tuple
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -25,6 +27,9 @@ VELOCITY_YEAR = 2026
 MONTH_NUMBERS = list(range(1, 13))
 MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 PRIMARY_DEPARTMENTS = ["Commercial", "Surety", "Employee Benefits", "Personal Lines"]
+SECTION_TITLE_FILL = PatternFill(fill_type="solid", fgColor="0B2A4A")
+SECTION_TITLE_FONT = Font(color="FFFFFF", bold=True, size=13)
+HEADER_FONT = Font(bold=True)
 
 DEPARTMENT_SUFFIX = {
     "commercial": "01",
@@ -393,7 +398,89 @@ def ordered_departments(departments: Iterable[str]) -> list[str]:
     return ordered
 
 
-def write_velocity_section(
+def auto_fit_row_heights(ws, min_row: int = 1, max_row: int | None = None, base_height: float = 15.0) -> None:
+    if max_row is None:
+        max_row = ws.max_row
+
+    for row_idx in range(min_row, max_row + 1):
+        max_lines = 1
+        for cell in ws[row_idx]:
+            if cell.value is None:
+                continue
+
+            text = str(cell.value)
+            if not text:
+                continue
+
+            explicit_lines = text.count("\n") + 1
+
+            col_letter = get_column_letter(cell.column)
+            col_width = ws.column_dimensions[col_letter].width
+            if col_width is None:
+                col_width = 10.0
+
+            approx_chars_per_line = max(1, int(col_width))
+            wrapped_lines = ceil(len(text) / approx_chars_per_line)
+
+            wrap_enabled = bool(cell.alignment and cell.alignment.wrap_text)
+            line_count = max(explicit_lines, wrapped_lines) if wrap_enabled else explicit_lines
+            if line_count > max_lines:
+                max_lines = line_count
+
+        ws.row_dimensions[row_idx].height = base_height * max_lines
+
+
+def auto_fit_columns_by_content(
+    ws,
+    min_col: int = 1,
+    max_col: int | None = None,
+    min_width: float = 8.0,
+    max_width: float = 36.0,
+) -> None:
+    if max_col is None:
+        max_col = ws.max_column
+
+    merged_ranges = list(ws.merged_cells.ranges)
+
+    for col_idx in range(min_col, max_col + 1):
+        max_len = 0
+        col_letter = get_column_letter(col_idx)
+        for row_idx in range(1, ws.max_row + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            if cell.value is None:
+                continue
+
+            # Skip merged title cells so one long title does not blow out column width.
+            in_merged = False
+            for merged in merged_ranges:
+                if cell.coordinate in merged:
+                    in_merged = True
+                    break
+            if in_merged:
+                continue
+
+            text = str(cell.value)
+            if len(text) > max_len:
+                max_len = len(text)
+
+        target_width = max(min_width, min(max_width, float(max_len + 2)))
+        ws.column_dimensions[col_letter].width = target_width
+
+
+def velocity_month_context(target_year: int, as_of_date: date) -> tuple[list[int], int]:
+    # If running before target year, show January as current month with no full months.
+    if as_of_date.year < target_year:
+        return [], 0
+    # If running after target year, treat December as current month and Jan-Nov as full months.
+    if as_of_date.year > target_year:
+        return list(range(0, 11)), 11
+
+    current_month_pos = max(0, min(11, as_of_date.month - 1))
+    full_month_positions = list(range(0, current_month_pos))
+    return full_month_positions, current_month_pos
+
+
+def write_compact_velocity_section(
     ws,
     start_row: int,
     title: str,
@@ -401,76 +488,141 @@ def write_velocity_section(
     numerator_by_dept: dict[str, list[float]],
     denominator_by_dept: dict[str, list[float]] | None,
     value_kind: str,
+    full_month_positions: list[int],
+    current_month_pos: int,
 ) -> int:
-    ws.cell(row=start_row, column=1, value=title)
-    ws.cell(row=start_row + 1, column=1, value="Department")
-    for i, month_label in enumerate(MONTH_LABELS, start=2):
-        ws.cell(row=start_row + 1, column=i, value=month_label)
-    ws.cell(row=start_row + 1, column=14, value="YTD")
+    month_cols_start = 2
+    ytd_full_col = month_cols_start + len(full_month_positions)
+    spacer_col = ytd_full_col + 1
+    current_month_col = spacer_col + 1
+    ytd_current_col = current_month_col + 1
+    end_col = ytd_current_col
 
-    row = start_row + 2
+    # Title row styling.
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=end_col)
+    title_cell = ws.cell(row=start_row, column=1, value=title)
+    title_cell.font = SECTION_TITLE_FONT
+    title_cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    for col in range(1, end_col + 1):
+        ws.cell(row=start_row, column=col).fill = SECTION_TITLE_FILL
+
+    header_row = start_row + 1
+    ws.cell(row=header_row, column=1, value="Department").font = HEADER_FONT
+    ws.column_dimensions[get_column_letter(1)].width = 32
+
+    for i, month_pos in enumerate(full_month_positions):
+        col = month_cols_start + i
+        ws.cell(row=header_row, column=col, value=MONTH_LABELS[month_pos]).font = HEADER_FONT
+        ws.column_dimensions[get_column_letter(col)].width = 8
+
+    ws.cell(row=header_row, column=ytd_full_col, value="YTD - Full Months").font = HEADER_FONT
+    ws.column_dimensions[get_column_letter(ytd_full_col)].width = 14
+
+    ws.cell(row=header_row, column=spacer_col, value="").font = HEADER_FONT
+    ws.column_dimensions[get_column_letter(spacer_col)].width = 2.5
+
+    ws.cell(row=header_row, column=current_month_col, value=MONTH_LABELS[current_month_pos]).font = HEADER_FONT
+    ws.column_dimensions[get_column_letter(current_month_col)].width = 8
+
+    ws.cell(row=header_row, column=ytd_current_col, value="YTD - Current Month").font = HEADER_FONT
+    ws.column_dimensions[get_column_letter(ytd_current_col)].width = 16
+
     totals_num = [0.0] * 12
     totals_den = [0.0] * 12
 
+    row = start_row + 2
     for dept in departments:
         ws.cell(row=row, column=1, value=dept)
         num_values = numerator_by_dept.get(dept, [0.0] * 12)
         den_values = denominator_by_dept.get(dept, [0.0] * 12) if denominator_by_dept is not None else None
 
-        ytd_num = 0.0
-        ytd_den = 0.0
-        for i in range(12):
-            num = num_values[i]
-            den = den_values[i] if den_values is not None else 1.0
-            totals_num[i] += num
-            if den_values is not None:
-                totals_den[i] += den
-            ytd_num += num
-            if den_values is not None:
-                ytd_den += den
+        full_num_sum = 0.0
+        full_den_sum = 0.0
 
-            if den_values is None:
-                value = round(num)
-            else:
-                value = (num / den) if den else 0.0
-            cell = ws.cell(row=row, column=i + 2, value=value)
-            if value_kind == "velocity":
-                cell.number_format = "0.00%"
-            else:
-                cell.number_format = "$#,##0"
+        for i, month_pos in enumerate(full_month_positions):
+            col = month_cols_start + i
+            num = num_values[month_pos]
+            den = den_values[month_pos] if den_values is not None else 1.0
+            totals_num[month_pos] += num
+            if den_values is not None:
+                totals_den[month_pos] += den
+            full_num_sum += num
+            if den_values is not None:
+                full_den_sum += den
 
-        if den_values is None:
-            ytd_cell = ws.cell(row=row, column=14, value=round(ytd_num))
-            ytd_cell.number_format = "$#,##0"
-        else:
-            ytd_cell = ws.cell(row=row, column=14, value=(ytd_num / ytd_den) if ytd_den else 0.0)
-            ytd_cell.number_format = "0.00%"
+            value = round(num) if den_values is None else ((num / den) if den else 0.0)
+            cell = ws.cell(row=row, column=col, value=value)
+            cell.number_format = "$#,##0" if value_kind == "money" else "0.00%"
+
+        current_num = num_values[current_month_pos]
+        current_den = den_values[current_month_pos] if den_values is not None else 1.0
+        totals_num[current_month_pos] += current_num
+        if den_values is not None:
+            totals_den[current_month_pos] += current_den
+
+        ytd_current_num = full_num_sum + current_num
+        ytd_current_den = full_den_sum + (current_den if den_values is not None else 0.0)
+
+        ytd_full_value = round(full_num_sum) if den_values is None else ((full_num_sum / full_den_sum) if full_den_sum else 0.0)
+        current_value = round(current_num) if den_values is None else ((current_num / current_den) if current_den else 0.0)
+        ytd_current_value = (
+            round(ytd_current_num)
+            if den_values is None
+            else ((ytd_current_num / ytd_current_den) if ytd_current_den else 0.0)
+        )
+
+        ytd_full_cell = ws.cell(row=row, column=ytd_full_col, value=ytd_full_value)
+        current_cell = ws.cell(row=row, column=current_month_col, value=current_value)
+        ytd_current_cell = ws.cell(row=row, column=ytd_current_col, value=ytd_current_value)
+        for c in (ytd_full_cell, current_cell, ytd_current_cell):
+            c.number_format = "$#,##0" if value_kind == "money" else "0.00%"
+
         row += 1
 
-    ws.cell(row=row, column=1, value="Total")
-    total_ytd_num = 0.0
-    total_ytd_den = 0.0
-    for i in range(12):
-        total_ytd_num += totals_num[i]
-        if denominator_by_dept is not None:
-            total_ytd_den += totals_den[i]
-            value = (totals_num[i] / totals_den[i]) if totals_den[i] else 0.0
-        else:
-            value = round(totals_num[i])
-        cell = ws.cell(row=row, column=i + 2, value=value)
-        if value_kind == "velocity":
-            cell.number_format = "0.00%"
-        else:
-            cell.number_format = "$#,##0"
+    total_row = row
+    total_label = ws.cell(row=total_row, column=1, value="Total")
+    total_label.font = HEADER_FONT
 
-    if denominator_by_dept is None:
-        ytd_cell = ws.cell(row=row, column=14, value=round(total_ytd_num))
-        ytd_cell.number_format = "$#,##0"
-    else:
-        ytd_cell = ws.cell(row=row, column=14, value=(total_ytd_num / total_ytd_den) if total_ytd_den else 0.0)
-        ytd_cell.number_format = "0.00%"
+    full_total_num = sum(totals_num[pos] for pos in full_month_positions)
+    full_total_den = sum(totals_den[pos] for pos in full_month_positions)
+    current_total_num = totals_num[current_month_pos]
+    current_total_den = totals_den[current_month_pos]
+    ytd_current_total_num = full_total_num + current_total_num
+    ytd_current_total_den = full_total_den + current_total_den
 
-    return row + 2
+    for i, month_pos in enumerate(full_month_positions):
+        col = month_cols_start + i
+        num = totals_num[month_pos]
+        den = totals_den[month_pos]
+        value = round(num) if denominator_by_dept is None else ((num / den) if den else 0.0)
+        cell = ws.cell(row=total_row, column=col, value=value)
+        cell.font = HEADER_FONT
+        cell.number_format = "$#,##0" if value_kind == "money" else "0.00%"
+
+    total_ytd_full = (
+        round(full_total_num)
+        if denominator_by_dept is None
+        else ((full_total_num / full_total_den) if full_total_den else 0.0)
+    )
+    total_current = (
+        round(current_total_num)
+        if denominator_by_dept is None
+        else ((current_total_num / current_total_den) if current_total_den else 0.0)
+    )
+    total_ytd_current = (
+        round(ytd_current_total_num)
+        if denominator_by_dept is None
+        else ((ytd_current_total_num / ytd_current_total_den) if ytd_current_total_den else 0.0)
+    )
+
+    total_ytd_full_cell = ws.cell(row=total_row, column=ytd_full_col, value=total_ytd_full)
+    total_current_cell = ws.cell(row=total_row, column=current_month_col, value=total_current)
+    total_ytd_current_cell = ws.cell(row=total_row, column=ytd_current_col, value=total_ytd_current)
+    for c in (total_ytd_full_cell, total_current_cell, total_ytd_current_cell):
+        c.font = HEADER_FONT
+        c.number_format = "$#,##0" if value_kind == "money" else "0.00%"
+
+    return total_row + 2
 
 
 def write_sales_velocity_sheet(
@@ -481,8 +633,9 @@ def write_sales_velocity_sheet(
     all_sales_by_department_2025: dict[str, list[float]],
 ) -> None:
     ws_velocity = wb_out.create_sheet(sheet_name)
+    full_month_positions, current_month_pos = velocity_month_context(VELOCITY_YEAR, date.today())
 
-    next_row = write_velocity_section(
+    next_row = write_compact_velocity_section(
         ws_velocity,
         start_row=1,
         title=f"Sales Velocity ({VELOCITY_YEAR} New Business / {VELOCITY_YEAR - 1} Same Month Sales)",
@@ -490,8 +643,10 @@ def write_sales_velocity_sheet(
         numerator_by_dept=newbiz_2026_by_dept,
         denominator_by_dept=all_sales_by_department_2025,
         value_kind="velocity",
+        full_month_positions=full_month_positions,
+        current_month_pos=current_month_pos,
     )
-    next_row = write_velocity_section(
+    next_row = write_compact_velocity_section(
         ws_velocity,
         start_row=next_row,
         title=f"Aggregated New Business Production ({VELOCITY_YEAR})",
@@ -499,8 +654,10 @@ def write_sales_velocity_sheet(
         numerator_by_dept=newbiz_2026_by_dept,
         denominator_by_dept=None,
         value_kind="money",
+        full_month_positions=full_month_positions,
+        current_month_pos=current_month_pos,
     )
-    write_velocity_section(
+    write_compact_velocity_section(
         ws_velocity,
         start_row=next_row,
         title=f"Aggregated Same Month Prior Year Sales ({VELOCITY_YEAR - 1})",
@@ -508,7 +665,11 @@ def write_sales_velocity_sheet(
         numerator_by_dept=all_sales_by_department_2025,
         denominator_by_dept=None,
         value_kind="money",
+        full_month_positions=full_month_positions,
+        current_month_pos=current_month_pos,
     )
+    auto_fit_row_heights(ws_velocity)
+    auto_fit_columns_by_content(ws_velocity)
 
 
 def consolidate() -> None:
