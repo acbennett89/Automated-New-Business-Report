@@ -8,11 +8,7 @@ if /I "%~1"=="--no-launch" set "LAUNCH_UI=0"
 
 echo [Setup] Preparing New Biz Report Automation UI launcher...
 
-set "PYEXE="
-where py >nul 2>&1 && set "PYEXE=py -3"
-if not defined PYEXE (
-  where python >nul 2>&1 && set "PYEXE=python"
-)
+call :resolve_python
 
 if not defined PYEXE (
   echo [Setup] Python not found. Attempting install via winget...
@@ -22,10 +18,7 @@ if not defined PYEXE (
     goto :failed
   )
   winget install -e --id Python.Python.3.12
-  where py >nul 2>&1 && set "PYEXE=py -3"
-  if not defined PYEXE (
-    where python >nul 2>&1 && set "PYEXE=python"
-  )
+  call :resolve_python
   if not defined PYEXE (
     echo [Setup] ERROR: Python still not found. Open a new terminal and rerun.
     goto :failed
@@ -104,3 +97,25 @@ pause >nul
 :end
 if "%SETUP_OK%"=="1" exit /b 0
 exit /b 1
+
+:resolve_python
+set "PYEXE="
+py -3 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=py -3"
+  exit /b 0
+)
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=python"
+  exit /b 0
+)
+if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
+  set "PYEXE=%LocalAppData%\Programs\Python\Python312\python.exe"
+  exit /b 0
+)
+if exist "%ProgramFiles%\Python312\python.exe" (
+  set "PYEXE=%ProgramFiles%\Python312\python.exe"
+  exit /b 0
+)
+exit /b 0

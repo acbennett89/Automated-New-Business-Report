@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import queue
-import shutil
 import subprocess
 import threading
 from datetime import datetime
@@ -380,10 +379,27 @@ class AutomationUI:
             self.log("Playwright Chromium already installed.")
 
     def find_bootstrap_python(self) -> list[str] | None:
-        if shutil.which("py"):
-            return ["py", "-3"]
-        if shutil.which("python"):
-            return ["python"]
+        for candidate in (["py", "-3"], ["python"]):
+            try:
+                result = subprocess.run(
+                    candidate + ["-c", "import sys"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=CREATE_NO_WINDOW,
+                    timeout=10,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if result.returncode == 0:
+                return candidate
+
+        for path in (
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python" / "Python312" / "python.exe",
+            Path(os.environ.get("ProgramFiles", "")) / "Python312" / "python.exe",
+        ):
+            if path.exists():
+                return [str(path)]
         return None
 
     def run_python_script(self, script_name: str) -> None:

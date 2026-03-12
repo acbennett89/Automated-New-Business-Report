@@ -2,11 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
-set "PYEXE="
-where py >nul 2>&1 && set "PYEXE=py -3"
-if not defined PYEXE (
-  where python >nul 2>&1 && set "PYEXE=python"
-)
+call :resolve_python
 
 if not defined PYEXE (
   echo Python not found. Attempting to install via winget...
@@ -16,10 +12,7 @@ if not defined PYEXE (
     goto :end
   )
   winget install -e --id Python.Python.3.12
-  where py >nul 2>&1 && set "PYEXE=py -3"
-  if not defined PYEXE (
-    where python >nul 2>&1 && set "PYEXE=python"
-  )
+  call :resolve_python
   if not defined PYEXE (
     echo Python still not found. Open a new terminal and rerun.
     goto :end
@@ -125,3 +118,26 @@ if "%WORKFLOW_OK%"=="1" echo Workflow is Complete
 echo.
 echo Press any key to close...
 pause >nul
+goto :eof
+
+:resolve_python
+set "PYEXE="
+py -3 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=py -3"
+  exit /b 0
+)
+python -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=python"
+  exit /b 0
+)
+if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
+  set "PYEXE=%LocalAppData%\Programs\Python\Python312\python.exe"
+  exit /b 0
+)
+if exist "%ProgramFiles%\Python312\python.exe" (
+  set "PYEXE=%ProgramFiles%\Python312\python.exe"
+  exit /b 0
+)
+exit /b 0
