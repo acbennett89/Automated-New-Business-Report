@@ -23,6 +23,7 @@ EPIC_CREDENTIALS_PATH = CONFIG_DIR / "epic_credentials.json"
 BIGNITION_CREDENTIALS_PATH = CONFIG_DIR / "bignition_credentials.json"
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+CHILD_ENV = dict(os.environ, PYTHONUNBUFFERED="1")
 
 PIPELINES: dict[str, list[str]] = {
     "Full Pipeline (Bignition + EPIC + All Tabs)": [
@@ -363,18 +364,18 @@ class AutomationUI:
             self.run_command(bootstrap + ["-m", "venv", str(PROJECT_ROOT / ".venv")], label="Create venv")
 
         self.log("Upgrading pip...")
-        self.run_command([str(VENV_PYTHON), "-m", "pip", "install", "--upgrade", "pip"], label="pip upgrade")
+        self.run_command([str(VENV_PYTHON), "-u", "-m", "pip", "install", "--upgrade", "pip"], label="pip upgrade")
 
         if not REQUIREMENTS.exists():
             raise RuntimeError(f"Missing requirements file: {REQUIREMENTS}")
         self.log("Installing requirements...")
-        self.run_command([str(VENV_PYTHON), "-m", "pip", "install", "-r", str(REQUIREMENTS)], label="pip install")
+        self.run_command([str(VENV_PYTHON), "-u", "-m", "pip", "install", "-r", str(REQUIREMENTS)], label="pip install")
 
         pw_dir = Path(os.environ.get("LOCALAPPDATA", "")) / "ms-playwright"
         has_chromium = pw_dir.exists() and any(pw_dir.glob("chromium-*"))
         if not has_chromium:
             self.log("Installing Playwright Chromium...")
-            self.run_command([str(VENV_PYTHON), "-m", "playwright", "install", "chromium"], label="playwright install")
+            self.run_command([str(VENV_PYTHON), "-u", "-m", "playwright", "install", "chromium"], label="playwright install")
         else:
             self.log("Playwright Chromium already installed.")
 
@@ -407,7 +408,7 @@ class AutomationUI:
         if not script_path.exists():
             raise RuntimeError(f"Script not found: {script_path}")
         self.log(f"Running {script_name}...")
-        self.run_command([str(VENV_PYTHON), str(script_path)], label=script_name)
+        self.run_command([str(VENV_PYTHON), "-u", str(script_path)], label=script_name)
 
     def run_command(self, args: list[str], label: str) -> None:
         if self.stop_requested:
@@ -421,6 +422,7 @@ class AutomationUI:
             text=True,
             bufsize=1,
             creationflags=CREATE_NO_WINDOW,
+            env=CHILD_ENV,
         )
         self.current_process = proc
         assert proc.stdout is not None

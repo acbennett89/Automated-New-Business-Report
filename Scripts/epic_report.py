@@ -17,10 +17,11 @@ ENTERPRISE_ID = "INSU621"
 STORAGE_STATE_PATH = PROJECT_ROOT / "config" / "epic_storage_state.json"
 EPIC_CREDENTIALS_PATH = PROJECT_ROOT / "config" / "epic_credentials.json"
 REPORT_NAME = "Automated Report - Production for Bignition Comparison"
+DIAGNOSTICS_DIR = WORKING_FILES_DIR / "Diagnostics"
 
 
 def log_step(message: str) -> None:
-    print(f"[{datetime.now():%H:%M:%S}] {message}")
+    print(f"[{datetime.now():%H:%M:%S}] {message}", flush=True)
 
 
 def seconds_since(started_at: float) -> str:
@@ -61,6 +62,41 @@ def manual_step_or_fail(headless: bool, fail_log: str, prompt: str) -> bool:
         return False
     input(prompt)
     return True
+
+
+def describe_page(page) -> str:
+    try:
+        url = page.url
+    except Exception:
+        url = "<unknown>"
+    try:
+        title = page.title()
+    except Exception:
+        title = "<unavailable>"
+    return f"URL={url} | Title={title}"
+
+
+def save_diagnostic(page, name: str) -> None:
+    DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "epic"
+    screenshot_path = DIAGNOSTICS_DIR / f"{stamp}_{safe_name}.png"
+    meta_path = DIAGNOSTICS_DIR / f"{stamp}_{safe_name}.txt"
+
+    meta_lines = [describe_page(page)]
+    try:
+        meta_lines.append(f"Viewport={page.viewport_size}")
+    except Exception:
+        pass
+
+    try:
+        page.screenshot(path=str(screenshot_path), full_page=True)
+        meta_lines.append(f"Screenshot={screenshot_path}")
+    except Exception as exc:
+        meta_lines.append(f"ScreenshotError={exc}")
+
+    meta_path.write_text("\n".join(meta_lines), encoding="utf-8")
+    log_step(f"Diagnostic saved: {meta_path}")
 
 
 def load_epic_credentials(path: Path) -> tuple[str, str] | None:
@@ -147,6 +183,7 @@ def click_login_and_wait(page, credentials: tuple[str, str] | None = None, headl
                 popup_page.wait_for_load_state("domcontentloaded", timeout=20_000)
             except Exception:
                 pass
+            log_step(f"Login step: popup state -> {describe_page(popup_page)}")
             did_submit_popup = submit_usercode_password_if_present(popup_page, usercode, password, timeout_ms=30_000)
             if did_submit_popup:
                 try:
@@ -166,8 +203,9 @@ def click_login_and_wait(page, credentials: tuple[str, str] | None = None, headl
             "button:has-text('Continue'), [data-automation-id='cboDatabase'], a[data-automation-id='sidebar-button-3 level-1']",
             timeout=60_000,
         )
-        log_step(f"Login step complete in {seconds_since(started)}.")
+        log_step(f"Login step complete in {seconds_since(started)}. {describe_page(page)}")
     except Exception:
+        save_diagnostic(page, "login_timeout")
         if not manual_step_or_fail(
             headless,
             "Login step timed out in headless mode.",
@@ -928,6 +966,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
     page = context.new_page()
     log_step(f"Full flow: navigating to {EPIC_URL}.")
     page.goto(EPIC_URL, wait_until="domcontentloaded")
+    log_step(f"Full flow: initial page state -> {describe_page(page)}")
     credentials = load_epic_credentials(EPIC_CREDENTIALS_PATH)
     if credentials is not None:
         log_step("Full flow: loaded saved EPIC credentials.")
@@ -955,6 +994,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
             click_continue(page)
             log_step("Full flow: waiting for Login button after enterprise submit (30s).")
             wait_visible(page, login_button, 30_000)
+            log_step(f"Full flow: post-enterprise state -> {describe_page(page)}")
 
     if credentials is not None:
         try:
@@ -975,7 +1015,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
 
     log_step("Full flow: determining whether database selection is required.")
     if wait_visible(page, reports_sidebar_button, 8_000):
-        log_step("Full flow: already on home page; database selection skipped.")
+        log_step(f"Full flow: already on home page; database selection skipped. {describe_page(page)}")
     else:
         log_step("Full flow: waiting for database combo (120s).")
         has_db_combo = wait_visible(page, database_combo, 120_000)
@@ -1011,8 +1051,9 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
         else:
             # Some usercodes bypass database selection and go straight home.
             if wait_visible(page, reports_sidebar_button, 30_000):
-                log_step("Full flow: reached home page without database selection.")
+                log_step(f"Full flow: reached home page without database selection. {describe_page(page)}")
             else:
+                save_diagnostic(page, "login_database_state_not_detected")
                 log_step("Full flow: neither database combo nor home sidebar detected.")
                 if not manual_step_or_fail(
                     headless,
@@ -1026,7 +1067,9 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
     try:
         log_step("Full flow: waiting for sidebar Reports button (120s).")
         page.wait_for_selector('a[data-automation-id="sidebar-button-3 level-1"]', timeout=120_000)
+        log_step(f"Full flow: sidebar detected. {describe_page(page)}")
     except Exception:
+        save_diagnostic(page, "sidebar_not_visible")
         log_step("Full flow: sidebar not ready; waiting for manual confirmation.")
         if not manual_step_or_fail(
             headless,
@@ -1044,8 +1087,10 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
     reports_page = open_reports_tab(context, page)
     if reports_page is None:
         reports_page = page
+    log_step(f"Full flow: reports page candidate -> {describe_page(reports_page)}")
 
     if not open_report_by_name(reports_page, REPORT_NAME):
+        save_diagnostic(reports_page, "open_report_failed")
         log_step(f"Full flow: auto-open report '{REPORT_NAME}' failed.")
         if not manual_step_or_fail(
             headless,
@@ -1058,6 +1103,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
 
     current_year = datetime.now().year
     if not update_accounting_month_criteria(reports_page, from_year=current_year - 1, to_year=current_year):
+        save_diagnostic(reports_page, "accounting_month_failed")
         log_step("Full flow: auto-set Accounting Month failed.")
         if not manual_step_or_fail(
             headless,
@@ -1070,6 +1116,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
 
     download_dir = WORKING_FILES_DIR
     if not generate_report_and_download(reports_page, download_dir):
+        save_diagnostic(reports_page, "generate_download_failed")
         log_step("Full flow: auto-generate/download failed.")
         if not manual_step_or_fail(
             headless,
@@ -1081,6 +1128,7 @@ def run_epic_flow(p, storage_state_path: Path, headless: bool, allow_login: bool
             return False
 
     if not logout_epic(reports_page):
+        save_diagnostic(reports_page, "logout_failed")
         log_step("Full flow: auto-logout failed.")
         if not manual_step_or_fail(
             headless,
