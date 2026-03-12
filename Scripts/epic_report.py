@@ -29,12 +29,13 @@ def seconds_since(started_at: float) -> str:
 
 
 def launch_browser(p, headless: bool):
+    launch_kwargs = {"args": ["--disable-popup-blocking"]}
     if headless:
-        return p.chromium.launch(headless=True)
+        return p.chromium.launch(headless=True, **launch_kwargs)
     try:
-        return p.chromium.launch(channel="chrome", headless=False)
+        return p.chromium.launch(channel="chrome", headless=False, **launch_kwargs)
     except Exception:
-        return p.chromium.launch(headless=False)
+        return p.chromium.launch(headless=False, **launch_kwargs)
 
 
 def is_visible(locator) -> bool:
@@ -761,6 +762,7 @@ def generate_report_and_download(page, download_dir: Path) -> bool:
         watch_page(existing_page)
     page.context.on("page", watch_page)
 
+    popup_page = None
     actions_button.first.click()
     option = page.locator('li[data-automation-id="dropdown-menu-item-103"]')
     if option.count() == 0:
@@ -771,8 +773,28 @@ def generate_report_and_download(page, download_dir: Path) -> bool:
         log_step("Generate step: Generate Report menu item not found.")
         return False
 
+    clicked_generate = False
+    log_step("Generate step: clicking Generate Report and watching for popup/new page (10s).")
+    try:
+        with page.context.expect_page(timeout=10_000) as popup_info:
+            option.first.click()
+            clicked_generate = True
+        popup_page = popup_info.value
+    except Exception:
+        if not clicked_generate:
+            option.first.click()
+
+    if popup_page is not None:
+        watch_page(popup_page)
+        try:
+            popup_page.wait_for_load_state("domcontentloaded", timeout=20_000)
+        except Exception:
+            pass
+        log_step(f"Generate step: popup/new page detected -> {describe_page(popup_page)}")
+    else:
+        log_step("Generate step: no popup/new page detected after Generate Report click.")
+
     log_step("Generate step: waiting for download after Generate Report (300s).")
-    option.first.click()
 
     deadline = time.perf_counter() + 300
     while time.perf_counter() < deadline and download_holder["download"] is None:
@@ -784,6 +806,10 @@ def generate_report_and_download(page, download_dir: Path) -> bool:
     download = download_holder["download"]
     if download is None:
         log_step("Generate step: no download detected within 300s.")
+        if popup_page is not None:
+            save_diagnostic(popup_page, "generate_popup_no_download")
+        else:
+            save_diagnostic(page, "generate_no_download")
         return False
 
     target_path = download_dir / download.suggested_filename
