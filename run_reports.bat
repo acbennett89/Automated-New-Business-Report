@@ -2,17 +2,25 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
+set "LOCAL_PYTHON_INSTALLER=%~dp0python-manager-26.0.msix"
 call :resolve_python
 
 if not defined PYEXE (
-  echo Python not found. Attempting to install via winget...
-  where winget >nul 2>&1
-  if errorlevel 1 (
-    echo winget not available. Please install Python 3 and rerun this script.
-    goto :end
+  if exist "%LOCAL_PYTHON_INSTALLER%" (
+    echo Python not found. Attempting install from bundled MSIX...
+    call :install_python_from_msix "%LOCAL_PYTHON_INSTALLER%"
+    call :resolve_python
   )
-  call :install_python_with_winget
-  call :resolve_python
+  if not defined PYEXE (
+    echo Python not found. Attempting to install via winget...
+    where winget >nul 2>&1
+    if errorlevel 1 (
+      echo winget not available. Please install Python and rerun this script.
+      goto :end
+    )
+    call :install_python_with_winget
+    call :resolve_python
+  )
   if not defined PYEXE (
     echo Python still not found. Finish any other installer or reboot, then rerun.
     goto :end
@@ -141,6 +149,18 @@ if exist "%ProgramFiles%\Python312\python.exe" (
   exit /b 0
 )
 exit /b 0
+
+:install_python_from_msix
+set "MSIX_PATH=%~f1"
+echo Installing Python from %~nx1...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Add-AppxPackage -LiteralPath '%MSIX_PATH%' -ForceApplicationShutdown -ErrorAction Stop ^| Out-Null; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+set "MSIX_RC=%ERRORLEVEL%"
+call :wait_for_python 60
+if defined PYEXE exit /b 0
+if not "%MSIX_RC%"=="0" (
+  echo Bundled MSIX install returned exit code %MSIX_RC%.
+)
+exit /b %MSIX_RC%
 
 :install_python_with_winget
 set "WINGET_RC=1"

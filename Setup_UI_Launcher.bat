@@ -4,6 +4,7 @@ cd /d "%~dp0"
 
 set "SETUP_OK=0"
 set "LAUNCH_UI=1"
+set "LOCAL_PYTHON_INSTALLER=%~dp0python-manager-26.0.msix"
 if /I "%~1"=="--no-launch" set "LAUNCH_UI=0"
 
 echo [Setup] Preparing New Biz Report Automation UI launcher...
@@ -11,14 +12,21 @@ echo [Setup] Preparing New Biz Report Automation UI launcher...
 call :resolve_python
 
 if not defined PYEXE (
-  echo [Setup] Python not found. Attempting install via winget...
-  where winget >nul 2>&1
-  if errorlevel 1 (
-    echo [Setup] ERROR: winget is not available. Install Python 3.12 and rerun this script.
-    goto :failed
+  if exist "%LOCAL_PYTHON_INSTALLER%" (
+    echo [Setup] Python not found. Attempting install from bundled MSIX...
+    call :install_python_from_msix "%LOCAL_PYTHON_INSTALLER%"
+    call :resolve_python
   )
-  call :install_python_with_winget
-  call :resolve_python
+  if not defined PYEXE (
+    echo [Setup] Python not found. Attempting install via winget...
+    where winget >nul 2>&1
+    if errorlevel 1 (
+      echo [Setup] ERROR: winget is not available. Install Python and rerun this script.
+      goto :failed
+    )
+    call :install_python_with_winget
+    call :resolve_python
+  )
   if not defined PYEXE (
     echo [Setup] ERROR: Python still not found. Finish any other installer or reboot, then rerun.
     goto :failed
@@ -119,6 +127,18 @@ if exist "%ProgramFiles%\Python312\python.exe" (
   exit /b 0
 )
 exit /b 0
+
+:install_python_from_msix
+set "MSIX_PATH=%~f1"
+echo [Setup] Installing Python from %~nx1...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Add-AppxPackage -LiteralPath '%MSIX_PATH%' -ForceApplicationShutdown -ErrorAction Stop ^| Out-Null; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+set "MSIX_RC=%ERRORLEVEL%"
+call :wait_for_python 60
+if defined PYEXE exit /b 0
+if not "%MSIX_RC%"=="0" (
+  echo [Setup] Bundled MSIX install returned exit code %MSIX_RC%.
+)
+exit /b %MSIX_RC%
 
 :install_python_with_winget
 set "WINGET_RC=1"
