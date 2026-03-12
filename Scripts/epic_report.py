@@ -145,6 +145,31 @@ def submit_usercode_password_if_present(page, usercode: str, password: str, time
         return False
 
 
+def handle_existing_session_prompt(page, timeout_ms: int = 10_000) -> bool:
+    prompt = page.locator("div.message-box").filter(
+        has=page.locator(
+            "div.text",
+            has_text=re.compile(r"already logged in|cancel that session|unsaved work", re.I),
+        )
+    ).first
+    if not wait_visible(page, prompt, timeout_ms):
+        return False
+
+    log_step("Login step: existing session prompt detected; selecting 'Yes'.")
+    try:
+        yes_button = prompt.locator('button[data-automation-id="Yes"], button:has-text("Yes")').first
+        yes_button.click(timeout=10_000)
+    except Exception:
+        log_step("Login step: failed clicking 'Yes' on existing session prompt.")
+        return False
+
+    try:
+        prompt.wait_for(state="hidden", timeout=10_000)
+    except Exception:
+        pass
+    return True
+
+
 def click_login_and_wait(page, credentials: tuple[str, str] | None = None, headless: bool = False):
     started = time.perf_counter()
     log_step("Login step: locating Login button.")
@@ -187,6 +212,7 @@ def click_login_and_wait(page, credentials: tuple[str, str] | None = None, headl
             log_step(f"Login step: popup state -> {describe_page(popup_page)}")
             did_submit_popup = submit_usercode_password_if_present(popup_page, usercode, password, timeout_ms=30_000)
             if did_submit_popup:
+                handle_existing_session_prompt(popup_page, timeout_ms=15_000)
                 try:
                     log_step("Login step: waiting for popup/new window to close (45s).")
                     popup_page.wait_for_event("close", timeout=45_000)
@@ -196,9 +222,11 @@ def click_login_and_wait(page, credentials: tuple[str, str] | None = None, headl
                 log_step("Login step: could not auto-submit credentials in popup/new window.")
         else:
             # Fallback for environments where the login form stays in the same page.
-            submit_usercode_password_if_present(page, usercode, password, timeout_ms=15_000)
+            if submit_usercode_password_if_present(page, usercode, password, timeout_ms=15_000):
+                handle_existing_session_prompt(page, timeout_ms=15_000)
 
     try:
+        handle_existing_session_prompt(page, timeout_ms=2_000)
         log_step("Login step: waiting for post-login state (Continue, Database, or Home sidebar) (60s).")
         page.wait_for_selector(
             "button:has-text('Continue'), [data-automation-id='cboDatabase'], a[data-automation-id='sidebar-button-3 level-1']",
