@@ -1,0 +1,21 @@
+# Python cache/venv
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Playwright/browser artifacts
+ms-playwright/
+
+# Local runtime config and credentials
+config/*.json
+
+# Generated reports/data outputs
+Working Files/
+Consolidated New Biz Report.xlsx
+Consolidated New Biz Report.new.xlsx
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
