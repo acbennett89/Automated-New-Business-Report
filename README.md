@@ -28,8 +28,8 @@ Automate collecting the required reports (currently gathered in Chrome) and prod
 ### Desktop UI
 1. Run `run_reports.bat ui` to open a Tkinter desktop launcher.
 2. Use the UI to run full pipeline, partial pipeline, setup only, and view live logs.
-3. On a new computer, run `Setup_UI_Launcher.bat` once to install Python dependencies and Playwright for the UI launcher.
-4. You can also double-click `Launch_UI.vbs`; if the local environment is missing, it will run `Setup_UI_Launcher.bat` first.
+3. On a new computer, run `run_reports.bat ui` once to install Python dependencies and Playwright for the UI launcher.
+4. You can also double-click `Launch_UI.vbs`; if the local environment is missing, it will run `run_reports.bat ui`.
 5. In the UI, enter EPIC `Usercode` and `Password` and click `Save Credentials` to enable EPIC auto-login.
 6. In the UI, enter Bignition `Username` and `Password` and click `Save Credentials` to enable Bignition auto-login.
 
@@ -60,7 +60,7 @@ Automate collecting the required reports (currently gathered in Chrome) and prod
 - Downloads are saved to `Working Files/`.
 - Delete `config/storage_state.json` if you need to force a fresh login.
 - Delete `config/epic_storage_state.json` to force EPIC re-login.
-- If Python is missing, `run_reports.bat` attempts to install it via `winget` and may prompt for approval.
+- If Python is missing, `run_reports.bat` first tries the bundled `python-manager-26.0.msix`, then falls back to `winget`.
 - Git help: see `CHEATSHEET.md` and `Scripts/git_shortcuts.ps1`.
 
 ## Change Log
