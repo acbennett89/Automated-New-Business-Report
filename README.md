@@ -28,9 +28,10 @@ Automate collecting the required reports (currently gathered in Chrome) and prod
 ### Desktop UI
 1. Run `run_reports.bat ui` to open a Tkinter desktop launcher.
 2. Use the UI to run full pipeline, partial pipeline, setup only, and view live logs.
-3. You can also double-click `Launch_UI.vbs` to launch the UI directly.
-4. In the UI, enter EPIC `Usercode` and `Password` and click `Save Credentials` to enable EPIC auto-login.
-5. In the UI, enter Bignition `Username` and `Password` and click `Save Credentials` to enable Bignition auto-login.
+3. On a new computer, run `Setup_UI_Launcher.bat` once to install Python dependencies and Playwright for the UI launcher.
+4. You can also double-click `Launch_UI.vbs`; if the local environment is missing, it will run `Setup_UI_Launcher.bat` first.
+5. In the UI, enter EPIC `Usercode` and `Password` and click `Save Credentials` to enable EPIC auto-login.
+6. In the UI, enter Bignition `Username` and `Password` and click `Save Credentials` to enable Bignition auto-login.
 
 ### New Biz Tabs Only (Debug)
 1. Run `run_reports.bat newbiz` to build only the `YYYY New Biz` tabs from the existing consolidated workbook.
