@@ -29,7 +29,11 @@ def seconds_since(started_at: float) -> str:
 
 
 def launch_browser(p, headless: bool):
-    launch_kwargs = {"args": ["--disable-popup-blocking"]}
+    WORKING_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    launch_kwargs = {
+        "args": ["--disable-popup-blocking"],
+        "downloads_path": str(WORKING_FILES_DIR),
+    }
     if headless:
         return p.chromium.launch(headless=True, **launch_kwargs)
     try:
@@ -757,6 +761,11 @@ def update_accounting_month_criteria(page, from_year: int, to_year: int) -> bool
 
 def generate_report_and_download(page, download_dir: Path) -> bool:
     started = time.perf_counter()
+    initial_files = {
+        path.name: path.stat().st_mtime
+        for path in download_dir.iterdir()
+        if path.is_file()
+    } if download_dir.exists() else {}
     log_step("Generate step: opening Actions -> Generate Report.")
     actions_button = page.locator("div.main-button[title^='Actions']")
     if actions_button.count() == 0:
@@ -824,14 +833,30 @@ def generate_report_and_download(page, download_dir: Path) -> bool:
 
     log_step("Generate step: waiting for download after Generate Report (300s).")
 
+    fallback_file = None
     deadline = time.perf_counter() + 300
-    while time.perf_counter() < deadline and download_holder["download"] is None:
+    while time.perf_counter() < deadline and download_holder["download"] is None and fallback_file is None:
+        for path in download_dir.iterdir():
+            if not path.is_file():
+                continue
+            if path.suffix.lower() == ".crdownload":
+                continue
+            current_mtime = path.stat().st_mtime
+            previous_mtime = initial_files.get(path.name)
+            if previous_mtime is None or current_mtime > previous_mtime + 0.5:
+                fallback_file = path
+                break
         try:
             page.wait_for_timeout(250)
         except Exception:
             time.sleep(0.25)
 
     download = download_holder["download"]
+    if fallback_file is not None:
+        log_step(f"Generate step: detected downloaded file on disk without Playwright event -> {fallback_file}")
+        log_step(f"Generate step complete in {seconds_since(started)}.")
+        return True
+
     if download is None:
         log_step("Generate step: no download detected within 300s.")
         if popup_page is not None:

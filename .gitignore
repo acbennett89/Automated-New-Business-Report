@@ -12,7 +12,8 @@ ms-playwright/
 config/*.json
 
 # Generated reports/data outputs
-Working Files/
+Working Files/*
+!Working Files/Excluded Accounts.xlsx
 Consolidated New Biz Report.xlsx
 Consolidated New Biz Report.new.xlsx
 
